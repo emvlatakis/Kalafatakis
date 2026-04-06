@@ -2,24 +2,35 @@ const {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   PageNumber, NumberFormat, Footer, Header, Table, TableRow, TableCell,
   WidthType, BorderStyle, ShadingType, PageBreak, Tab, TabStopType,
-  convertInchesToTwip, LevelFormat, UnderlineType
+  convertInchesToTwip, LevelFormat, UnderlineType, ImageRun,
+  ExternalHyperlink, InternalHyperlink, BookmarkStart, BookmarkEnd
 } = require("docx");
 const fs = require("fs");
 
 // Load chapters
 const perilepsi = require("./chapters/perilepsi");
-const ch1 = require("./chapters/ch1_eisagogi");
-const ch2 = require("./chapters/ch2_theoritiko");
-const ch3 = require("./chapters/ch3_pyrosvestiko");
-const ch4 = require("./chapters/ch4_ekpaideutiko");
-const ch5 = require("./chapters/ch5_epidrasi");
-const ch6 = require("./chapters/ch6_casestudies");
-const ch7 = require("./chapters/ch7_technologia");
-const ch8 = require("./chapters/ch8_symperasmata");
+const eisagogi = require("./chapters/ch1_eisagogi");
+const ch1 = require("./chapters/ch2_theoritiko");
+const ch2 = require("./chapters/ch3_pyrosvestiko");
+const ch3 = require("./chapters/ch4_ekpaideutiko");
+const ch4 = require("./chapters/ch5_epidrasi");
+const ch5 = require("./chapters/ch6_casestudies");
+const ch6 = require("./chapters/ch7_technologia");
+const symperasmata = require("./chapters/ch8_symperasmata");
 
-const chapters = [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8];
+const numberedChapters = [ch1, ch2, ch3, ch4, ch5, ch6];
+const allContentChapters = [eisagogi, ...numberedChapters, symperasmata];
 
-// === BIBLIOGRAPHY DATA ===
+// Margins in twips: 3cm left, 2.5cm others
+const CM_TO_TWIP = 567;
+const MARGINS = {
+  left: Math.round(3 * CM_TO_TWIP),   // 3cm
+  right: Math.round(2.5 * CM_TO_TWIP), // 2.5cm
+  top: Math.round(2.5 * CM_TO_TWIP),   // 2.5cm
+  bottom: Math.round(2.5 * CM_TO_TWIP) // 2.5cm
+};
+
+// === BIBLIOGRAPHY ===
 const bibliographyEntries = [
   `Akhloufi, M. A., Couturier, A., & Castro, N. A. (2021). Unmanned aerial vehicles for wildfire monitoring and management: State of the art and future trends. Drones, 5(1), Article 26.`,
   `Burke, C. S., Stagl, K. C., Salas, E., Pierce, L., & Kendall, D. (2006). Understanding team adaptation: A conceptual analysis and model. Journal of Applied Psychology, 91(6), 1189-1207.`,
@@ -49,64 +60,46 @@ const bibliographyEntries = [
   `EFFIS. (n.d.). Statistics portal. European Commission, JRC. https://effis.jrc.ec.europa.eu/`
 ];
 
-// === HELPER FUNCTIONS ===
-
-function makeTextRun(text, opts = {}) {
+// === HELPERS ===
+function tr(text, opts = {}) {
   return new TextRun({
     text,
     font: "Times New Roman",
-    size: opts.size || 24, // 12pt
+    size: opts.size || 24,
     bold: opts.bold || false,
     italics: opts.italics || false,
     underline: opts.underline ? { type: UnderlineType.SINGLE } : undefined,
   });
 }
 
-function makeParagraph(text, opts = {}) {
-  const runs = [];
-  if (typeof text === "string") {
-    runs.push(makeTextRun(text, opts));
-  } else if (Array.isArray(text)) {
-    text.forEach(t => runs.push(t));
-  }
+function heading1(text, pageBreak = true) {
   return new Paragraph({
-    children: runs,
-    spacing: { line: 360, after: 120 }, // 1.5 line spacing
-    alignment: opts.alignment || AlignmentType.JUSTIFIED,
-    indent: opts.indent ? { firstLine: 720 } : undefined,
-    heading: opts.heading || undefined,
-    pageBreakBefore: opts.pageBreak || false,
-  });
-}
-
-function makeHeading1(text, pageBreak = true) {
-  return new Paragraph({
-    children: [makeTextRun(text, { bold: true, size: 28 })], // 14pt
+    children: [tr(text, { bold: true, size: 28 })],
     spacing: { before: 480, after: 240, line: 360 },
     alignment: AlignmentType.CENTER,
     pageBreakBefore: pageBreak,
   });
 }
 
-function makeHeading2(text) {
+function heading2(text) {
   return new Paragraph({
-    children: [makeTextRun(text, { bold: true, size: 26 })], // 13pt
+    children: [tr(text, { bold: true, size: 26 })],
     spacing: { before: 360, after: 200, line: 360 },
     alignment: AlignmentType.LEFT,
   });
 }
 
-function makeHeading3(text) {
+function heading3(text) {
   return new Paragraph({
-    children: [makeTextRun(text, { bold: true, size: 24 })], // 12pt
+    children: [tr(text, { bold: true, size: 24 })],
     spacing: { before: 240, after: 120, line: 360 },
     alignment: AlignmentType.LEFT,
   });
 }
 
-function makeBodyParagraph(text) {
+function bodyPara(text) {
   return new Paragraph({
-    children: [makeTextRun(text)],
+    children: [tr(text)],
     spacing: { line: 360, after: 120 },
     alignment: AlignmentType.JUSTIFIED,
     indent: { firstLine: 720 },
@@ -116,19 +109,16 @@ function makeBodyParagraph(text) {
 function makeTable(tableData) {
   const { caption, headers, rows } = tableData;
   const elements = [];
-
-  // Caption
   elements.push(new Paragraph({
-    children: [makeTextRun(caption, { bold: true, size: 22, italics: true })],
+    children: [tr(caption, { bold: true, size: 22, italics: true })],
     spacing: { before: 240, after: 120, line: 360 },
     alignment: AlignmentType.CENTER,
   }));
 
-  // Header row
   const headerRow = new TableRow({
     children: headers.map(h => new TableCell({
       children: [new Paragraph({
-        children: [makeTextRun(h, { bold: true, size: 20 })],
+        children: [tr(h, { bold: true, size: 20 })],
         alignment: AlignmentType.CENTER,
         spacing: { before: 60, after: 60 },
       })],
@@ -137,11 +127,10 @@ function makeTable(tableData) {
     })),
   });
 
-  // Data rows
   const dataRows = rows.map(row => new TableRow({
     children: row.map(cell => new TableCell({
       children: [new Paragraph({
-        children: [makeTextRun(cell, { size: 20 })],
+        children: [tr(cell, { size: 20 })],
         alignment: AlignmentType.LEFT,
         spacing: { before: 40, after: 40 },
       })],
@@ -153,187 +142,159 @@ function makeTable(tableData) {
     rows: [headerRow, ...dataRows],
     width: { size: 100, type: WidthType.PERCENTAGE },
   }));
-
   elements.push(new Paragraph({ spacing: { after: 200 } }));
-
   return elements;
 }
 
-function buildChapterElements(chapter) {
+function buildChapter(chapter) {
   const elements = [];
-
-  // Chapter title
-  elements.push(makeHeading1(`ΚΕΦΑΛΑΙΟ ${chapter.number}: ${chapter.title}`));
+  const titlePrefix = chapter.number !== null ? `ΚΕΦΑΛΑΙΟ ${chapter.number}: ` : "";
+  elements.push(heading1(`${titlePrefix}${chapter.title}`));
 
   for (const section of chapter.sections) {
-    // Determine heading level based on numbering pattern
-    const parts = section.heading.split(" ")[0].split(".");
-    if (parts.length <= 2 && !parts[1]) {
-      elements.push(makeHeading2(section.heading));
-    } else if (parts.length === 2) {
-      elements.push(makeHeading2(section.heading));
+    const headingText = section.heading;
+    const dotCount = (headingText.match(/\./g) || []).length;
+    if (dotCount >= 2) {
+      elements.push(heading3(headingText));
     } else {
-      elements.push(makeHeading3(section.heading));
+      elements.push(heading2(headingText));
     }
 
-    // Paragraphs
     for (const para of section.paragraphs) {
-      if (para.trim()) {
-        elements.push(makeBodyParagraph(para));
-      }
+      if (para.trim()) elements.push(bodyPara(para));
     }
-
-    // Table if present
-    if (section.table) {
-      elements.push(...makeTable(section.table));
-    }
+    if (section.table) elements.push(...makeTable(section.table));
   }
-
   return elements;
 }
 
-// === BUILD DOCUMENT ===
-
+// === MAIN ===
 async function generateDocument() {
   const allElements = [];
 
-  // --- COVER PAGE ---
+  // --- COVER ---
   allElements.push(new Paragraph({ spacing: { before: 2400 } }));
-  allElements.push(makeParagraph("[ΠΑΝΕΠΙΣΤΗΜΙΟ]", { alignment: AlignmentType.CENTER, bold: true, size: 28 }));
-  allElements.push(makeParagraph("[ΤΜΗΜΑ]", { alignment: AlignmentType.CENTER, bold: true, size: 26 }));
-  allElements.push(new Paragraph({ spacing: { before: 1200 } }));
   allElements.push(new Paragraph({
-    children: [makeTextRun("ΔΙΠΛΩΜΑΤΙΚΗ ΕΡΓΑΣΙΑ", { bold: true, size: 32 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 600, after: 600 },
+    children: [tr("[ΠΑΝΕΠΙΣΤΗΜΙΟ]", { bold: true, size: 28 })],
+    alignment: AlignmentType.CENTER, spacing: { after: 100 },
+  }));
+  allElements.push(new Paragraph({
+    children: [tr("[ΤΜΗΜΑ]", { bold: true, size: 26 })],
+    alignment: AlignmentType.CENTER, spacing: { after: 1200 },
+  }));
+  allElements.push(new Paragraph({
+    children: [tr("ΔΙΠΛΩΜΑΤΙΚΗ ΕΡΓΑΣΙΑ", { bold: true, size: 32 })],
+    alignment: AlignmentType.CENTER, spacing: { before: 600, after: 600 },
   }));
   allElements.push(new Paragraph({ spacing: { before: 400 } }));
-  allElements.push(new Paragraph({
-    children: [makeTextRun("Ο ΡΟΛΟΣ ΤΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΜΕΣΩ ΑΣΚΗΣΕΩΝ", { bold: true, size: 30 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 100 },
-  }));
-  allElements.push(new Paragraph({
-    children: [makeTextRun("ΣΤΗ ΒΕΛΤΙΩΣΗ ΤΗΣ ΕΠΙΧΕΙΡΗΣΙΑΚΗΣ ΕΤΟΙΜΟΤΗΤΑΣ", { bold: true, size: 30 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 100 },
-  }));
-  allElements.push(new Paragraph({
-    children: [makeTextRun("ΤΟΥ ΠΥΡΟΣΒΕΣΤΙΚΟΥ ΣΩΜΑΤΟΣ", { bold: true, size: 30 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 800 },
-  }));
+  const titleLines = [
+    "Ο ΡΟΛΟΣ ΤΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΜΕΣΩ ΑΣΚΗΣΕΩΝ",
+    "ΣΤΗ ΒΕΛΤΙΩΣΗ ΤΗΣ ΕΠΙΧΕΙΡΗΣΙΑΚΗΣ ΕΤΟΙΜΟΤΗΤΑΣ",
+    "ΤΩΝ ΣΩΜΑΤΩΝ ΑΣΦΑΛΕΙΑΣ ΚΑΙ ΤΩΝ ΕΝΟΠΛΩΝ ΔΥΝΑΜΕΩΝ"
+  ];
+  for (const line of titleLines) {
+    allElements.push(new Paragraph({
+      children: [tr(line, { bold: true, size: 30 })],
+      alignment: AlignmentType.CENTER, spacing: { after: 100 },
+    }));
+  }
   allElements.push(new Paragraph({ spacing: { before: 1200 } }));
   allElements.push(new Paragraph({
-    children: [makeTextRun("Φοιτητής: Άγγελος Καλαφατάκης", { size: 26 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 200 },
+    children: [tr("Φοιτητής: Άγγελος Καλαφατάκης", { size: 26 })],
+    alignment: AlignmentType.CENTER, spacing: { after: 200 },
   }));
   allElements.push(new Paragraph({
-    children: [makeTextRun("Επιβλέπων Καθηγητής: [ΕΠΙΒΛΕΠΩΝ ΚΑΘΗΓΗΤΗΣ]", { size: 26 })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 600 },
+    children: [tr("Επιβλέπων Καθηγητής: [ΕΠΙΒΛΕΠΩΝ ΚΑΘΗΓΗΤΗΣ]", { size: 26 })],
+    alignment: AlignmentType.CENTER, spacing: { after: 600 },
   }));
   allElements.push(new Paragraph({
-    children: [makeTextRun("[ΠΟΛΗ], [ΕΤΟΣ]", { size: 24 })],
+    children: [tr("[ΠΟΛΗ], [ΕΤΟΣ]", { size: 24 })],
     alignment: AlignmentType.CENTER,
-    spacing: { after: 200 },
   }));
 
   // --- PERILEPSI ---
-  allElements.push(makeHeading1("ΠΕΡΙΛΗΨΗ", true));
-  allElements.push(makeBodyParagraph(perilepsi.perilepsi));
+  allElements.push(heading1("ΠΕΡΙΛΗΨΗ", true));
+  allElements.push(bodyPara(perilepsi.perilepsi));
   allElements.push(new Paragraph({
-    children: [
-      makeTextRun("Λέξεις-κλειδιά: ", { bold: true }),
-      makeTextRun(perilepsi.lekseis_kleidi, { italics: true }),
-    ],
-    spacing: { before: 240, line: 360 },
-    alignment: AlignmentType.JUSTIFIED,
+    children: [tr("Λέξεις-κλειδιά: ", { bold: true }), tr(perilepsi.lekseis_kleidi, { italics: true })],
+    spacing: { before: 240, line: 360 }, alignment: AlignmentType.JUSTIFIED,
   }));
 
   // --- ABSTRACT ---
-  allElements.push(makeHeading1("ABSTRACT", true));
-  allElements.push(makeBodyParagraph(perilepsi.abstract_en));
+  allElements.push(heading1("ABSTRACT", true));
+  allElements.push(bodyPara(perilepsi.abstract_en));
   allElements.push(new Paragraph({
-    children: [
-      makeTextRun("Keywords: ", { bold: true }),
-      makeTextRun(perilepsi.keywords_en, { italics: true }),
-    ],
-    spacing: { before: 240, line: 360 },
-    alignment: AlignmentType.JUSTIFIED,
+    children: [tr("Keywords: ", { bold: true }), tr(perilepsi.keywords_en, { italics: true })],
+    spacing: { before: 240, line: 360 }, alignment: AlignmentType.JUSTIFIED,
   }));
 
-  // --- TABLE OF CONTENTS (manual) ---
-  allElements.push(makeHeading1("ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ", true));
+  // --- TOC ---
+  allElements.push(heading1("ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ", true));
   const tocEntries = [
-    "ΠΕΡΙΛΗΨΗ",
-    "ABSTRACT",
-    "ΚΕΦΑΛΑΙΟ 1: ΕΙΣΑΓΩΓΗ",
-    "  1.1 Αντικείμενο και σκοπός της εργασίας",
-    "  1.2 Μεθοδολογική προσέγγιση",
-    "  1.3 Δομή της εργασίας",
-    "ΚΕΦΑΛΑΙΟ 2: ΘΕΩΡΗΤΙΚΟ ΠΛΑΙΣΙΟ",
-    "  2.1 Η έννοια της επιχειρησιακής ετοιμότητας",
-    "  2.2 Θεωρίες μάθησης και εκπαίδευσης ενηλίκων",
-    "  2.3 Η εκπαίδευση σε επαγγέλματα υψηλού κινδύνου",
-    "ΚΕΦΑΛΑΙΟ 3: ΤΟ ΠΥΡΟΣΒΕΣΤΙΚΟ ΣΩΜΑ",
-    "  3.1 Η αποστολή και ο ρόλος του ΠΣ στην Ελλάδα",
-    "  3.2 Σωματικές, τεχνικές και ψυχολογικές απαιτήσεις",
-    "  3.3 Εξέλιξη των κινδύνων: κλιματική αλλαγή",
-    "ΚΕΦΑΛΑΙΟ 4: ΤΟ ΕΚΠΑΙΔΕΥΤΙΚΟ ΣΥΣΤΗΜΑ",
-    "  4.1 Βασική εκπαίδευση",
-    "  4.2 Συνεχιζόμενη εκπαίδευση",
-    "  4.3 Τύποι ασκήσεων",
-    "  4.4 Σχεδιασμός και αξιολόγηση ασκήσεων",
-    "ΚΕΦΑΛΑΙΟ 5: Η ΕΠΙΔΡΑΣΗ ΤΗΣ ΕΚΠΑΙΔΕΥΣΗΣ",
-    "  5.1 Επίδραση στη σωματική ετοιμότητα",
-    "  5.2 Επίδραση στην τεχνική επάρκεια",
-    "  5.3 Επίδραση στην ψυχολογική ανθεκτικότητα",
-    "  5.4 Επίδραση στην ομαδική συνεργασία",
-    "  5.5 Σχέση συχνότητας ασκήσεων και ετοιμότητας",
-    "ΚΕΦΑΛΑΙΟ 6: ΔΙΕΘΝΗΣ ΣΥΝΕΡΓΑΣΙΑ & CASE STUDIES",
-    "  6.1 Ο Ευρωπαϊκός Μηχανισμός UCPM",
-    "  6.2 Case Study 1: Πυρκαγιά Μάτι (2018)",
-    "  6.3 Case Study 2: Ασκήσεις MODEX — ΕΜΑΚ",
-    "  6.4 Case Study 3: Πυρκαγιές 2021",
-    "  6.5 Οφέλη διακρατικών ασκήσεων",
-    "ΚΕΦΑΛΑΙΟ 7: Ο ΡΟΛΟΣ ΤΗΣ ΤΕΧΝΟΛΟΓΙΑΣ",
-    "  7.1 Προσομοιωτές εκπαίδευσης",
-    "  7.2 Εικονική και επαυξημένη πραγματικότητα",
-    "  7.3 Μη επανδρωμένα αεροσκάφη (drones)",
-    "  7.4 Γεωγραφικά Συστήματα Πληροφοριών (GIS)",
-    "  7.5 Ηλεκτρονική μάθηση",
-    "  7.6 Αποτίμηση τεχνολογικών εφαρμογών",
-    "ΚΕΦΑΛΑΙΟ 8: ΣΥΜΠΕΡΑΣΜΑΤΑ ΚΑΙ ΠΡΟΤΑΣΕΙΣ",
-    "  8.1 Σύνοψη ευρημάτων",
-    "  8.2 Προτάσεις βελτίωσης",
-    "  8.3 Περιορισμοί της εργασίας",
-    "  8.4 Προτάσεις για μελλοντική έρευνα",
-    "ΒΙΒΛΙΟΓΡΑΦΙΑ",
+    { text: "ΠΕΡΙΛΗΨΗ", level: 0 },
+    { text: "ABSTRACT", level: 0 },
+    { text: "ΕΙΣΑΓΩΓΗ", level: 0 },
+    { text: "Αντικείμενο και σκοπός", level: 1 },
+    { text: "Μεθοδολογική προσέγγιση", level: 1 },
+    { text: "Δομή της εργασίας", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 1: ΘΕΩΡΗΤΙΚΟ ΠΛΑΙΣΙΟ", level: 0 },
+    { text: "1.1 Η έννοια της επιχειρησιακής ετοιμότητας", level: 1 },
+    { text: "1.2 Παράγοντες που επηρεάζουν την ετοιμότητα", level: 1 },
+    { text: "1.3 Θεωρίες μάθησης (Kolb, Ericsson, CRM)", level: 1 },
+    { text: "1.4 Η εκπαίδευση σε επαγγέλματα υψηλού κινδύνου", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 2: ΤΑ ΣΩΜΑΤΑ ΑΣΦΑΛΕΙΑΣ ΚΑΙ ΟΙ ΕΝΟΠΛΕΣ ΔΥΝΑΜΕΙΣ", level: 0 },
+    { text: "2.1 Οι Ένοπλες Δυνάμεις", level: 1 },
+    { text: "2.2 Η Ελληνική Αστυνομία (ΕΛ.ΑΣ.)", level: 1 },
+    { text: "2.3 Η Τροχαία Αστυνομία", level: 1 },
+    { text: "2.4 Το Πυροσβεστικό Σώμα", level: 1 },
+    { text: "2.5 Κοινές επιχειρησιακές απαιτήσεις", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 3: ΕΚΠΑΙΔΕΥΤΙΚΑ ΣΥΣΤΗΜΑΤΑ ΚΑΙ ΜΟΡΦΕΣ ΑΣΚΗΣΕΩΝ", level: 0 },
+    { text: "3.1 Η στρατιωτική εκπαίδευση", level: 1 },
+    { text: "3.2 Η αστυνομική εκπαίδευση", level: 1 },
+    { text: "3.3 Η εκπαίδευση της Τροχαίας", level: 1 },
+    { text: "3.4 Η εκπαίδευση στο Πυροσβεστικό Σώμα", level: 1 },
+    { text: "3.5 Πολυφορεακές ασκήσεις", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 4: Η ΕΠΙΔΡΑΣΗ ΤΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΣΤΗΝ ΕΤΟΙΜΟΤΗΤΑ", level: 0 },
+    { text: "4.1 Σωματική ετοιμότητα", level: 1 },
+    { text: "4.2 Τεχνική επάρκεια", level: 1 },
+    { text: "4.3 Ψυχολογική ανθεκτικότητα", level: 1 },
+    { text: "4.4 Ομαδική συνεργασία και συντονισμός", level: 1 },
+    { text: "4.5 Συχνότητα ασκήσεων και ετοιμότητα", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 5: CASE STUDIES ΚΑΙ ΔΙΕΘΝΗΣ ΣΥΝΕΡΓΑΣΙΑ", level: 0 },
+    { text: "5.1 Πλαίσια διεθνούς συνεργασίας", level: 1 },
+    { text: "5.2 CS1: Πυρκαγιά Μάτι (2018)", level: 1 },
+    { text: "5.3 CS2: NATO Defender Europe", level: 1 },
+    { text: "5.4 CS3: MODEX / ΕΜΑΚ", level: 1 },
+    { text: "5.5 CS4: ATLAS Network αντιτρομοκρατίας", level: 1 },
+    { text: "ΚΕΦΑΛΑΙΟ 6: Ο ΡΟΛΟΣ ΤΗΣ ΤΕΧΝΟΛΟΓΙΑΣ", level: 0 },
+    { text: "6.1 Προσομοιωτές", level: 1 },
+    { text: "6.2 VR/AR", level: 1 },
+    { text: "6.3 Drones", level: 1 },
+    { text: "6.4 GIS, e-learning", level: 1 },
+    { text: "ΣΥΜΠΕΡΑΣΜΑΤΑ ΚΑΙ ΠΡΟΤΑΣΕΙΣ", level: 0 },
+    { text: "ΒΙΒΛΙΟΓΡΑΦΙΑ", level: 0 },
   ];
-  for (const entry of tocEntries) {
-    const isSubEntry = entry.startsWith("  ");
+  for (const e of tocEntries) {
     allElements.push(new Paragraph({
-      children: [makeTextRun(entry.trim(), { size: isSubEntry ? 22 : 24, bold: !isSubEntry })],
-      spacing: { after: isSubEntry ? 40 : 80, line: 300 },
-      indent: isSubEntry ? { left: 720 } : undefined,
+      children: [tr(e.text, { size: e.level === 0 ? 24 : 22, bold: e.level === 0 })],
+      spacing: { after: e.level === 0 ? 80 : 40, line: 300 },
+      indent: e.level === 1 ? { left: 720 } : undefined,
     }));
   }
 
   // --- CHAPTERS ---
-  for (const chapter of chapters) {
-    allElements.push(...buildChapterElements(chapter));
+  for (const chapter of allContentChapters) {
+    allElements.push(...buildChapter(chapter));
   }
 
-  // --- BIBLIOGRAPHY ---
-  allElements.push(makeHeading1("ΒΙΒΛΙΟΓΡΑΦΙΑ", true));
+  // --- BIBLIOGRAPHY (unnumbered) ---
+  allElements.push(heading1("ΒΙΒΛΙΟΓΡΑΦΙΑ", true));
   for (const entry of bibliographyEntries) {
     allElements.push(new Paragraph({
-      children: [makeTextRun(entry, { size: 22 })],
+      children: [tr(entry, { size: 22 })],
       spacing: { after: 120, line: 300 },
       alignment: AlignmentType.JUSTIFIED,
-      indent: { left: 720, hanging: 720 }, // Hanging indent for APA
+      indent: { left: 720, hanging: 720 },
     }));
   }
 
@@ -343,32 +304,18 @@ async function generateDocument() {
       properties: {
         page: {
           size: { width: 11906, height: 16838 }, // A4
-          margin: {
-            top: convertInchesToTwip(0.79), // ~2cm
-            bottom: convertInchesToTwip(0.79),
-            left: convertInchesToTwip(0.98), // ~2.5cm
-            right: convertInchesToTwip(0.79),
-          },
+          margin: MARGINS,
         },
       },
       headers: {
         default: new Header({
-          children: [new Paragraph({
-            children: [makeTextRun("", { size: 18 })],
-            alignment: AlignmentType.RIGHT,
-          })],
+          children: [new Paragraph({ children: [tr("", { size: 18 })], alignment: AlignmentType.RIGHT })],
         }),
       },
       footers: {
         default: new Footer({
           children: [new Paragraph({
-            children: [
-              new TextRun({
-                children: [PageNumber.CURRENT],
-                font: "Times New Roman",
-                size: 20,
-              }),
-            ],
+            children: [new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 20 })],
             alignment: AlignmentType.RIGHT,
           })],
         }),
@@ -379,25 +326,19 @@ async function generateDocument() {
 
   const buffer = await Packer.toBuffer(doc);
   fs.writeFileSync("./output/diplomatiki.docx", buffer);
-  console.log("✓ Δημιουργήθηκε: output/diplomatiki.docx");
+  console.log("✓ diplomatiki.docx generated");
 
-  // Count approximate pages (rough: ~3000 chars per page)
-  let totalChars = 0;
-  for (const ch of chapters) {
+  // Count chars for page estimate (with 1.5 spacing, ~1800 chars/page)
+  let totalChars = perilepsi.perilepsi.length + perilepsi.abstract_en.length;
+  for (const ch of allContentChapters) {
     for (const s of ch.sections) {
-      for (const p of s.paragraphs) {
-        totalChars += p.length;
-      }
+      for (const p of s.paragraphs) totalChars += p.length;
     }
   }
-  totalChars += perilepsi.perilepsi.length + perilepsi.abstract_en.length;
-  console.log(`  Εκτίμηση: ~${Math.round(totalChars / 2500)} σελίδες κυρίου κειμένου`);
-  console.log(`  Πηγές βιβλιογραφίας: ${bibliographyEntries.length}`);
-  console.log(`  Κεφάλαια: ${chapters.length}`);
-  console.log(`  Πίνακες: 6`);
+  const estPages = Math.round(totalChars / 1800);
+  console.log(`  Est. text pages: ~${estPages} (+ cover, TOC, tables, bibliography ~${estPages + 8})`);
+  console.log(`  Sources: ${bibliographyEntries.length}`);
+  console.log(`  Chapters: ${numberedChapters.length} numbered + intro + conclusions`);
 }
 
-generateDocument().catch(err => {
-  console.error("Error:", err);
-  process.exit(1);
-});
+generateDocument().catch(err => { console.error(err); process.exit(1); });
